@@ -1,0 +1,73 @@
+---
+title: "GALA-R voor VBP"
+author: "Brosens_Dimitri"
+date: "2026-06-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(galah)
+library(dplyr)
+
+```
+
+# authenticatie
+
+```{r}
+#options(browser = "/usr/bin/google-chrome")
+
+galah_config(atlas = "Flanders", authenticate = TRUE, verbose = TRUE,
+             email = Sys.getenv("GBIF_EMAIL"))
+
+# With Authentication
+galah_call() |>
+  authenticate() |>
+  filter(dynamicProperties_rbac == TRUE) |>
+  count() |>
+  collect()
+
+```
+
+
+
+
+Eerste check
+
+```{r}
+gaai <- galah_call() |>
+  galah_identify("Garrulus glandarius") |>
+  atlas_occurrences()
+
+nrow(gaai)
+```
+# 1. Hoeveel records zie je MET rbac filter (beveiligde data)?
+
+```{r}
+met_rbac <- galah_call() |>
+  authenticate() |>
+  filter(dynamicProperties_rbac == TRUE) |>
+  count() |>
+  collect()
+
+print(met_rbac)
+```
+
+```{r}
+totaal_ingelogd <- galah_call() |>
+  authenticate() |>
+  count() |>
+  collect()
+
+print(totaal_ingelogd)
+```
+# Dit laat zien met welke credentials je momenteel ingelogd bent in de sessie
+
+
+```{r}
+galah_config()
+```
+
