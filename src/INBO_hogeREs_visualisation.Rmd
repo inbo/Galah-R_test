@@ -1,0 +1,154 @@
+---
+title: "plotting rbac=true data"
+author: "Brosens_Dimitri"
+date: "2026-07-01"
+output: html_document
+---
+
+```{r}
+library(galah)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(leaflet)
+```
+
+```{r}
+rbac_data <- galah_call() |>
+  authenticate() |>
+  filter(dynamicProperties_rbac == TRUE) |>
+  select(scientificName, decimalLatitude, decimalLongitude, eventDate) |>
+  atlas_occurrences()
+```
+# Toon alle datasets in de Vlaamse atlas
+
+```{r}
+
+beschikbare_datasets <- show_all(datasets)
+print(beschikbare_datasets)
+```
+```{r}
+dataset_tellingen <- galah_call() |>
+  authenticate() |>  # Optioneel, maar zo tel je ook je RBAC data mee
+  group_by(datasetName) |>
+  atlas_counts()
+```
+
+```{r}
+dataset_tellingen_gesorteerd <- dataset_tellingen |>
+  arrange(desc(count))
+```
+
+```{r}
+print(dataset_tellingen_gesorteerd, n = 20)
+```
+```{r}
+invertebrates_HR <- galah_call() |>
+  authenticate() |>
+  filter(dataResourceUid == "dr287") |>
+  select(scientificName, decimalLatitude, decimalLongitude, eventDate) |>
+  atlas_occurrences()
+```
+
+```{r}
+plot_data <- invertebrates_HR |> 
+  filter(!is.na(decimalLongitude) & !is.na(decimalLatitude))
+```
+
+```{r}
+leaflet(data = plot_data) |> 
+  addProviderTiles(providers$CartoDB.Positron) |> # Rustige achtergrondkaart
+  addCircleMarkers(
+    lng = ~decimalLongitude, 
+    lat = ~decimalLatitude,
+    radius = 4,
+    color = "darkred",  # Een mooie opvallende kleur voor deze dataset
+    stroke = FALSE, 
+    fillOpacity = 0.6,
+    popup = ~paste0("<strong>Soort:</strong> ", scientificName, "<br>",
+                    "<strong>Datum:</strong> ", eventDate)
+  )
+```
+
+```{r}
+dr136_data <- galah_call() |>
+  authenticate() |>
+  filter(dataResourceUid == "dr136") |>
+  select(scientificName, decimalLatitude, decimalLongitude, eventDate) |>
+  atlas_occurrences()
+```
+
+```{r}
+
+# Reset galah naar een anonieme staat
+galah_config(atlas = "Flanders", authenticate = FALSE)
+
+# Vraag de data op ZONDER authenticate()
+invertebraten_LR <- galah_call() |>
+  filter(dataResourceUid == "dr136") |>
+  select(scientificName, decimalLatitude, decimalLongitude, eventDate) |>
+  atlas_occurrences()
+
+# Check het aantal rijen
+cat("Aantal records dr136 (zonder login):", nrow(invertebraten_LR), "\n")
+```
+
+```{r}
+# 1. Filter de records zonder coördinaten eruit
+plot_data_anoniem <- invertebraten_LR |> 
+  dplyr::filter(!is.na(decimalLongitude) & !is.na(decimalLatitude))
+
+# 2. Maak de interactieve kaart
+leaflet(data = plot_data_anoniem) |> 
+  addProviderTiles(providers$CartoDB.Positron) |> # Fijne, lichte achtergrondkaart
+  addCircleMarkers(
+    lng = ~decimalLongitude, 
+    lat = ~decimalLatitude,
+    radius = 5,
+    color = "orangered", # Een opvallende kleur voor de anonieme data
+    stroke = FALSE, 
+    fillOpacity = 0.6,
+    popup = ~paste0("<strong>Soort:</strong> ", scientificName, "<br>",
+                    "<strong>Datum:</strong> ", eventDate, "<br>",
+                    "<strong>Bron:</strong> dr136 (Lage Resolutie)")
+  )
+```
+
+
+```{r}
+leaflet() |> 
+  addProviderTiles(providers$CartoDB.Positron) |> 
+  
+  # Laag 1: De publieke lage-resolutiedata (dr136) - Blauw
+  addCircleMarkers(
+    data = invertebraten_LR,
+    lng = ~decimalLongitude, 
+    lat = ~decimalLatitude,
+    radius = 6,
+    color = "blue",
+    stroke = FALSE, 
+    fillOpacity = 0.5,
+    group = "Lage Resolutie (dr136 - Publiek)",
+    popup = ~paste0("<strong>Bron:</strong> dr136 (Lage Res)<br><strong>Soort:</strong> ", scientificName)
+  ) |> 
+  
+  # Laag 2: De beveiligde hoge-resolutiedata (dr286) - Rood
+  addCircleMarkers(
+    data = invertebrates_HR,
+    lng = ~decimalLongitude, 
+    lat = ~decimalLatitude,
+    radius = 4,
+    color = "red",
+    stroke = FALSE, 
+    fillOpacity = 0.8,
+    group = "Hoge Resolutie (dr286 - RBAC)",
+    popup = ~paste0("<strong>Bron:</strong> dr286 (Hoge Res)<br><strong>Soort:</strong> ", scientificName)
+  ) |> 
+  
+  # Lagen-schakelaar rechtsboven om de grids en exacte punten aan/uit te zetten
+  addLayersControl(
+    overlayGroups = c("Lage Resolutie (dr136 - Publiek)", "Hoge Resolutie (dr286 - RBAC)"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
