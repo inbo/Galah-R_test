@@ -2,7 +2,9 @@
 title: "IFBL Checklist & Trendanalyse met IFBL Shapefile"
 author: "Brosens_Dimitri"
 date: "2026-07-03"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -21,6 +23,23 @@ library(here)
 galah_config(atlas = "Flanders")
 ```
 
+
+```{r}
+#options(browser = "/usr/bin/google-chrome")
+
+galah_config(atlas = "Flanders", authenticate = TRUE, verbose = TRUE,
+             email = Sys.getenv("GBIF_EMAIL"))
+
+# With Authentication
+galah_call() |>
+  authenticate() |>
+  filter(dynamicProperties_rbac == TRUE) |>
+  count() |>
+  collect()
+
+
+
+```
 
 Vul hier het uurhok in dat je wil analyseren
 
@@ -201,5 +220,13 @@ if (exists("punten_in_hok") && nrow(punten_in_hok) > 0) {
       lng2 = unname(bbox_coords$xmax), lat2 = unname(bbox_coords$ymax)
     )
 }
+```
+
+```{r}
+tabel <- here("data", "processed", paste0("trendmatrix_", tolower(mijn_uurhok_naam), ".csv"))
+```
+
+```{r}
+write.csv2(eindresultaat, file = tabel, row.names = FALSE)
 ```
 
