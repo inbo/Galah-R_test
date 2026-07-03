@@ -163,9 +163,9 @@ cat("Aantal binnengehaalde rijen voor deze regio:", nrow(raw_occurrences), "\n")
 
 ```
 
+# niet dit stuk code
 
-
-```{r}
+```{r eval=FALSE, include=FALSE}
 if (!is.null(raw_occurrences) && nrow(raw_occurrences) > 0) {
   
   # Maak van de binnengekomen punten een sf-object
