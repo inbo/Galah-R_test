@@ -3,8 +3,8 @@ title: "IFBL Checklist & Trendanalyse met IFBL Shapefile"
 author: "Brosens_Dimitri"
 date: "2026-07-03"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -27,24 +27,23 @@ galah_config(atlas = "Flanders")
 ```{r}
 #options(browser = "/usr/bin/google-chrome")
 
-galah_config(atlas = "Flanders", authenticate = TRUE, verbose = TRUE,
-             email = Sys.getenv("GBIF_EMAIL"))
-
-# With Authentication
-galah_call() |>
-  authenticate() |>
-  filter(dynamicProperties_rbac == TRUE) |>
-  count() |>
-  collect()
+#galah_config(atlas = "Flanders", authenticate = TRUE, verbose = TRUE,
+#             email = Sys.getenv("GBIF_EMAIL"))
 
 
 
+mijn_email <- "dimitri.brosens@inbo.be" 
+
+galah_config(
+  atlas = "Flanders",
+  email = mijn_email
+)
 ```
 
 Vul hier het uurhok in dat je wil analyseren
 
 ```{r}
-mijn_uurhok_naam <- "d3-22"
+mijn_uurhok_naam <- "d3-21"
 ```
 
 ```{r}
