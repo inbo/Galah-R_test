@@ -1,0 +1,205 @@
+---
+title: "IFBL Checklist & Trendanalyse met IFBL Shapefile"
+author: "Brosens_Dimitri"
+date: "2026-07-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(galah)
+library(dplyr)
+library(sf)
+library(tidyr)
+library(stringr)
+library(leaflet)
+library(here)
+
+galah_config(atlas = "Flanders")
+```
+
+
+Vul hier het uurhok in dat je wil analyseren
+
+```{r}
+mijn_uurhok_naam <- "d3-22"
+```
+
+```{r}
+# Inladen van de specifieke portaallijst
+mijn_brede_lijst <- search_all(lists, "dr384") |> 
+  show_values(all_fields = TRUE)
+
+# Filteren op sleutelsoorten en namen opschonen naar "Genus species"
+soorten_subset <- mijn_brede_lijst |> 
+  filter(sleutelsoorten == "ja") |> 
+  pull(name) |> 
+  as.character() |> 
+  str_extract("^\\s*\\S+\\s+\\S+") |> 
+  unique()
+
+cat("Aantal geselecteerde sleutelsoorten voor analyse:", length(soorten_subset), "\n")
+```
+```{r}
+# Bouw het dynamische pad naar de zip-file met here
+zip_pad <- here("data", "raw", "IFBL_WGS84.zip")
+
+# GDAL (de motor achter sf) kan rechtstreeks in een zip kijken via de '/vsizip/' prefix
+alle_uurhokken <- st_read(paste0("/vsizip/", zip_pad), quiet = TRUE)
+
+```
+
+```{r}
+cat("--- Beschikbare kolommen in de IFBL shapefile ---\n")
+print(names(alle_uurhokken))
+
+cat("\n--- Eerste indruk van de data (glimpse) ---\n")
+glimpse(alle_uurhokken)
+```
+
+```{r}
+# We transformeren naar WGS84 voor Leaflet
+alle_uurhokken_wgs84 <- st_transform(alle_uurhokken, crs = 4326)  # eigenlijk onnodig, maar in geval brons shape in Lambert is moet dit wel
+
+# We vereenvoudigen de geometrie heel licht (st_simplify) zodat 
+# de kaart duizenden hokken vloeiend kan tonen zonder haperen
+kaart_laag <- st_simplify(alle_uurhokken_wgs84, dTolerance = 0.0001)
+```
+
+
+```{r}
+eerste_kolom <- names(alle_uurhokken)[1]
+
+cat("\nKaart genereren van de volledige laag...\n")
+leaflet(kaart_laag) |> 
+  addTiles() |>  # OpenStreetMap achtergrond
+  addPolygons(
+    color = "#1f78b4", 
+    weight = 1, 
+    opacity = 0.5, 
+    fillColor = "#a6cee3", 
+    fillOpacity = 0.2,
+    # De popup toont de waarde van de eerste kolom (vaak de HOK-code) als je erop klikt
+    popup = ~paste("Hok eigenschap:", TAG)
+  )
+```
+
+
+
+
+```{r}
+# Filter het juiste uurhok eruit
+# OPMERKING: Mocht de kolom in jouw shapefile anders heten dan 'HOK' (bijv. 'IFBL'), pas dit hieronder aan.
+mijn_hok_polygoon <- alle_uurhokken |> 
+  filter(TAG == mijn_uurhok_naam)
+
+if (nrow(mijn_hok_polygoon) == 0) {
+  stop(paste("Fout: Het uurhok", mijn_uurhok_naam, "werd niet gevonden in de shapefile. Controleer de kolomnamen met names(alle_uurhokken)."))
+}
+
+# Zorg dat de projectie absoluut op WGS84 (CRS 4326) staat voor galah en leaflet
+mijn_hok_polygoon <- st_transform(mijn_hok_polygoon, crs = 4326)
+
+cat("Polygoon voor", mijn_uurhok_naam, "succesvol ingeladen uit de shapefile!\n")
+```
+
+```{r}
+cat("Data ophalen uit de Atlas (beperkt tot de regio van het hok)...\n")
+
+raw_occurrences <- galah_call() |>
+  galah_geolocate(mijn_hok_polygoon, type = "bbox") |> 
+  filter(scientificName %in% soorten_subset) |> 
+  select(scientificName, year, decimalLatitude, decimalLongitude) |>
+  atlas_occurrences()
+
+cat("Aantal binnengehaalde rijen voor deze regio:", nrow(raw_occurrences), "\n")
+```
+
+```{r}
+if (!is.null(raw_occurrences) && nrow(raw_occurrences) > 0) {
+  
+  # Maak van de binnengekomen punten een sf-object
+  punten_sf <- raw_occurrences |> 
+    filter(!is.na(decimalLongitude) & !is.na(decimalLatitude)) |> 
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  
+  # Exact snijden met de polygoon uit de shapefile
+  punten_in_hok <- st_intersection(punten_sf, mijn_hok_polygoon)
+  
+  # Bereken de 10-jaars periodes en bouw de matrix
+  eindresultaat <- punten_in_hok |>
+    st_drop_geometry() |> 
+    filter(!is.na(year) & year >= 1980) |> 
+    mutate(
+      tijdsinterval = cut(
+        year, 
+        breaks = seq(1980, 2030, by = 10), 
+        right = FALSE,
+        labels = c("1980-1989", "1990-1999", "2000-2009", "2010-2019", "2020-2029")
+      )
+    ) |>
+    group_by(scientificName, tijdsinterval) |>
+    tally(name = "aantal") |>
+    ungroup() |>
+    pivot_wider(names_from = tijdsinterval, values_from = aantal, values_fill = 0)
+  
+  # Toon de tabel in het eindrapport
+  knitr::kable(eindresultaat, caption = paste("Aantal waarnemingen per sleutelsoort in IFBL-uurhok", mijn_uurhok_naam))
+  
+} else {
+  cat("Geen data overgebleven na ruimtelijke filtering of geen records gevonden.\n")
+}
+```
+
+# Visualisatie van het hok
+
+```{r}
+if (exists("punten_in_hok") && nrow(punten_in_hok) > 0) {
+  
+  # Voorbereiden datalaag voor de kaart
+  punten_kaart_sf <- punten_in_hok |> 
+    filter(!is.na(year) & year >= 1980) |> 
+    mutate(
+      tijdsinterval = cut(
+        year, 
+        breaks = seq(1980, 2030, by = 10), 
+        right = FALSE,
+        labels = c("1980-1989", "1990-1999", "2000-2009", "2010-2019", "2020-2029")
+      )
+    )
+
+  # Kleurenpallet definiëren
+  pal <- colorFactor(palette = "YlOrRd", domain = punten_kaart_sf$tijdsinterval)
+  bbox_coords <- st_bbox(mijn_hok_polygoon)
+
+  # Kaart genereren
+  leaflet() |> 
+    addTiles() |> 
+    addPolygons(
+      data = mijn_hok_polygoon,
+      color = "#444444", weight = 2, opacity = 0.8, fillColor = "transparent",
+      popup = paste("IFBL-uurhok:", mijn_uurhok_naam)
+    ) |> 
+    addCircleMarkers(
+      data = punten_kaart_sf,
+      radius = 5, color = ~pal(tijdsinterval), stroke = TRUE, fillOpacity = 0.8, weight = 1,
+      popup = ~paste0(
+        "<strong>Soort:</strong> <em>", scientificName, "</em><br>",
+        "<strong>Jaar:</strong> ", year, "<br>",
+        "<strong>Interval:</strong> ", tijdsinterval
+      )
+    ) |> 
+    addLegend(
+      data = punten_kaart_sf, pal = pal, values = ~tijdsinterval, 
+      title = "Tijdsinterval", position = "bottomright"
+    ) |> 
+    fitBounds(
+      lng1 = unname(bbox_coords$xmin), lat1 = unname(bbox_coords$ymin),
+      lng2 = unname(bbox_coords$xmax), lat2 = unname(bbox_coords$ymax)
+    )
+}
+```
+
