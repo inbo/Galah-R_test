@@ -1,0 +1,206 @@
+---
+title: "Checklist_IFBL_DATE"
+author: "Brosens_Dimitri"
+date: "2026-07-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(galah)
+library(dplyr)
+library(sf)
+library(tidyr)
+library(stringr)
+```
+
+```{r}
+galah_config(atlas = "Flanders")
+```
+
+```{r}
+beschikbare_lijsten <- show_all(lists)
+print(beschikbare_lijsten, n = 40)
+```
+# haal de soortenlijst op die je nodig hebt
+
+
+```{r}
+mijn_brede_lijst <- search_all(lists, "dr384") |> 
+  show_values(all_fields = TRUE)
+
+glimpse(mijn_brede_lijst)
+```
+# Filter de lijst op jouw gewenste attribuut-waarde
+
+
+```{r}
+sleutelsoorten_lijst <- mijn_brede_lijst |> 
+  filter(sleutelsoorten == "ja") # Pas dit aan naar jouw situatie
+
+cat("Aantal soorten na attribuut-filter:", length(sleutelsoorten_lijst), "\n")
+
+```
+# Zoek naar beschikbare ruimtelijke lagen in het portaal
+
+```{r}
+
+ruimtelijke_velden <- search_all(fields, "ifbl") # of "utm"
+print(ruimtelijke_velden)
+```
+
+```{r}
+# Zoek naar alle velden die met 'grid', 'cell' of 'spatial' te maken hebben
+search_all(fields, "grid")
+search_all(fields, "cell")
+search_all(fields, "spatial")
+```
+```{r}
+mijn_uurhok_naam <- "D3-22"
+```
+
+```{r}
+# ==========================================
+# STAP 2: Bereken de Uurhok-polygoon wiskundig (Lambert 72) - Gecorrigeerd zonder warnings
+# ==========================================
+parse_ifbl_4km <- function(hok_naam) {
+  # Haal de componenten eruit (bijv D, 3, 2, 2)
+  clean_name <- gsub("[-_ ]", "", toupper(hok_naam))
+  letter <- substr(clean_name, 1, 1)
+  kaartblad_y <- as.numeric(substr(clean_name, 2, 2))
+  uur_y <- as.numeric(substr(clean_name, 3, 3))
+  uur_x <- as.numeric(substr(clean_name, 4, 4))
+  
+  # Basis oorsprong van het Belgische IFBL grid (Groot-Hoogstraten linksboven)
+  # We gebruiken case_when als moderne, stabiele vervanger
+  letter_idx <- case_when(
+    letter == "A" ~ 0, letter == "B" ~ 1, letter == "C" ~ 2, letter == "D" ~ 3,
+    letter == "E" ~ 4, letter == "F" ~ 5, letter == "G" ~ 6, letter == "H" ~ 7,
+    letter == "I" ~ 8, letter == "J" ~ 9, letter == "K" ~ 10, letter == "L" ~ 11,
+    letter == "M" ~ 12,
+    TRUE ~ NA_real_
+  )
+  
+  if(is.na(letter_idx)) {
+    stop("Fout: Ongeldige eerste letter in het IFBL-hok.")
+  }
+  
+  # Bereken de X en Y hoeken in Lambert 72 meters
+  orig_x <- 20000 + (letter_idx * 32000)
+  orig_y <- 250000 - (kaartblad_y * 20000)
+  
+  xmin <- orig_x + ((uur_x - 1) * 4000)
+  ymax <- orig_y - ((5 - uur_y) * 4000)
+  xmax <- xmin + 4000
+  ymin <- ymax - 4000
+  
+  # Maak het vierkant
+  coords <- matrix(c(
+    xmin, ymin,
+    xmax, ymin,
+    xmax, ymax,
+    xmin, ymax,
+    xmin, ymin
+  ), ncol = 2, byrow = TRUE)
+  
+  poly <- st_polygon(list(coords)) |> 
+    st_sfc(crs = 31370) |> # Belgische Lambert 72
+    st_as_sf()
+  
+  return(poly)
+}
+
+# Genereer de polygoon lokaal zonder waarschuwingen
+uurhok_sf <- parse_ifbl_4km(mijn_uurhok_naam)
+mijn_hok_polygoon <- st_transform(uurhok_sf, crs = 4326)
+
+cat("Polygoon voor", mijn_uurhok_naam, "succesvol lokaal berekend zonder waarschuwingen!\n")
+```
+```{r}
+# ==========================================
+# STAP 3: Occurrences ophalen uit het portaal
+# ==========================================
+cat("Data ophalen uit de Atlas...\n")
+
+occurrences_hok <- galah_call() |>
+  galah_geolocate(mijn_hok_polygoon, type = "polygon") |> 
+  filter(scientificName %in% sleutelsoorten_lijst) |>
+  select(scientificName, year) |>
+  atlas_occurrences()
+```
+```{r}
+# FIX: Zorg ervoor dat de soortenlijst een schone tekstvector is (geen list-object)
+sleutelsoorten_lijst <- mijn_brede_lijst |> 
+  filter(sleutelsoorten == "ja") |> # (Of jouw gekozen filter dat 14 soorten opleverde)
+  pull(name) |> 
+  as.character()
+```
+
+```{r}
+cat("Data ophalen uit de Atlas (beperkt op soorten)...\n")
+
+# We filteren nu specifiek op de sleutelsoorten
+soorten_subset <- mijn_brede_lijst |> 
+  filter(sleutelsoorten == "ja") |> # Aangepast naar sleutelsoorten
+  pull(name) |> 
+  as.character() |> 
+  # Haal auteursnamen en extra ballast weg (behouw puur Genus species)
+  str_extract("^\\s*\\S+\\s+\\S+") |> 
+  unique()
+```
+```{r}
+cat("\nData ophalen uit de Atlas (beperkt op opgeschoonde soorten)...\n")
+
+raw_occurrences <- galah_call() |>
+  galah_identify(soorten_subset) |> # FIX: galah_identify() werkt robuuster voor pure vectors
+  select(scientificName, year, decimalLatitude, decimalLongitude) |>
+  atlas_occurrences()
+```
+
+
+```{r}
+# ==========================================
+# STAP 4: Ruimtelijk snijden & Tijdsintervallen
+# ==========================================
+if (!is.null(raw_occurrences) && nrow(raw_occurrences) > 0) {
+  
+  cat("Waarnemingen lokaal filteren binnen uurhok:", mijn_uurhok_naam, "...\n")
+  
+  # Maak van de punten een sf-object
+  punten_sf <- raw_occurrences |> 
+    filter(!is.na(decimalLongitude) & !is.na(decimalLatitude)) |> 
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  
+  # Ruimtelijke intersection met de polygoon
+  punten_in_hok <- st_intersection(punten_sf, mijn_hok_polygoon)
+  
+  # Bereken de 10-jaars periodes
+  eindresultaat <- punten_in_hok |>
+    st_drop_geometry() |> 
+    filter(!is.na(year) & year >= 1980) |> 
+    mutate(
+      tijdsinterval = cut(
+        year, 
+        breaks = seq(1980, 2030, by = 10), 
+        right = FALSE,
+        labels = c("1980-1989", "1990-1999", "2000-2009", "2010-2019", "2020-2029")
+      )
+    ) |>
+    group_by(scientificName, tijdsinterval) |>
+    tally(name = "aantal") |>
+    ungroup() |>
+    pivot_wider(names_from = tijdsinterval, values_from = aantal, values_fill = 0)
+  
+  # Toon de matrix!
+  View(eindresultaat)
+  
+} else {
+  cat("Geen data gevonden in de atlas voor deze soortencombinatie.\n")
+}
+```
+
+
+

@@ -1,0 +1,190 @@
+---
+title: "checklist_clean_date"
+author: "Brosens_Dimitri"
+date: "2026-07-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(galah)
+library(dplyr)
+library(sf)
+library(tidyr)
+library(stringr)
+
+galah_config(atlas = "Flanders")
+```
+
+```{r}
+# Inladen van de specifieke portaallijst
+mijn_brede_lijst <- search_all(lists, "dr384") |> 
+  show_values(all_fields = TRUE)
+
+# Filteren op sleutelsoorten en namen opschonen naar "Genus species"
+soorten_subset <- mijn_brede_lijst |> 
+ filter(sleutelsoorten == "ja") |> 
+  pull(name) |> 
+  as.character() |> 
+  str_extract("^\\s*\\S+\\s+\\S+") |> 
+  unique()
+
+cat("Aantal geselecteerde sleutelsoorten voor analyse:", length(soorten_subset), "\n")
+```
+
+```{r}
+mijn_uurhok_naam <- "D3-22"
+
+parse_ifbl_4km <- function(hok_naam) {
+  clean_name <- gsub("[-_ ]", "", toupper(hok_naam))
+  letter <- substr(clean_name, 1, 1)
+  kaartblad_y <- as.numeric(substr(clean_name, 2, 2))
+  uur_y <- as.numeric(substr(clean_name, 3, 3))
+  uur_x <- as.numeric(substr(clean_name, 4, 4))
+  
+  letter_idx <- case_match(letter,
+    "A"~0, "B"~1, "C"~2, "D"~3, "E"~4, "F"~5, "G"~6, "H"~7, "I"~8, "J"~9, "K"~10, "L"~11, "M"~12
+  )
+  
+  orig_x <- 20000 + (letter_idx * 32000)
+  orig_y <- 250000 - (kaartblad_y * 20000)
+  
+  xmin <- orig_x + ((uur_x - 1) * 4000)
+  # FIX: De Y-berekening hersteld naar de juiste topografische logica van het IFBL-grid
+  ymin <- orig_y - (uur_y * 4000) 
+  xmax <- xmin + 4000
+  ymax <- ymin + 4000
+  
+  coords <- matrix(c(xmin, ymin, xmax, ymin, xmax, ymax, xmin, ymax, xmin, ymin), ncol = 2, byrow = TRUE)
+  poly <- st_polygon(list(coords)) |> st_sfc(crs = 31370) |> st_as_sf()
+  return(poly)
+}
+
+# Bereken de gecorrigeerde polygoon
+uurhok_sf <- parse_ifbl_4km(mijn_uurhok_naam)
+mijn_hok_polygoon <- st_transform(uurhok_sf, crs = 4326)
+
+cat("Polygoon voor", mijn_uurhok_naam, "succesvol berekend.\n")
+```
+```{r}
+raw_occurrences <- galah_call() |>
+  galah_identify(soorten_subset) |> 
+  select(scientificName, year, decimalLatitude, decimalLongitude) |>
+  atlas_occurrences()
+```
+```{r}
+if (!is.null(raw_occurrences) && nrow(raw_occurrences) > 0) {
+  
+  # Punten geografisch projecteren
+  punten_sf <- raw_occurrences |> 
+    filter(!is.na(decimalLongitude) & !is.na(decimalLatitude)) |> 
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  
+  # Enkel de waarnemingen BINNEN het uurhok behouden
+  punten_in_hok <- st_intersection(punten_sf, mijn_hok_polygoon)
+  
+  # Groeperen per soort en per 10 jaar
+  eindresultaat <- punten_in_hok |>
+    st_drop_geometry() |> 
+    filter(!is.na(year) & year >= 1980) |> 
+    mutate(
+      tijdsinterval = cut(
+        year, 
+        breaks = seq(1980, 2030, by = 10), 
+        right = FALSE,
+        labels = c("1980-1989", "1990-1999", "2000-2009", "2010-2019", "2020-2029")
+      )
+    ) |>
+    group_by(scientificName, tijdsinterval) |>
+    tally(name = "aantal") |>
+    ungroup() |>
+    pivot_wider(names_from = tijdsinterval, values_from = aantal, values_fill = 0)
+  
+  # Toon het eindresultaat in het rapport
+  knitr::kable(eindresultaat, caption = paste("Aantal waarnemingen per soort in IFBL-uurhok", mijn_uurhok_naam))
+  
+} else {
+  cat("Geen data gevonden in de atlas voor deze soortencombinatie.\n")
+}
+```
+
+```{r}
+# ==========================================
+# GECORRIGEERDE STAP 3: Download via filter()
+# ==========================================
+cat("Data ophalen uit de Atlas voor de geselecteerde soorten...\n")
+
+raw_occurrences <- galah_call() |>
+  # We filteren direct op de opgeschoonde tekstvector
+  filter(scientificName %in% soorten_subset) |> 
+  select(scientificName, year, decimalLatitude, decimalLongitude) |>
+  atlas_occurrences()
+
+# CHECK: Hoeveel rijen en welke soorten zitten er NU in?
+cat("Aantal binnengehaalde rijen:", nrow(raw_occurrences), "\n")
+cat("Unieke soorten in de ruwe download:\n")
+print(unique(raw_occurrences$scientificName))
+```
+
+```{r}
+cat("Grenzen van het hok bepalen voor de server...\n")
+
+# We berekenen de uiterste coördinaten (min/max) van jouw IFBL-uurhok
+bbox <- st_bbox(mijn_hok_polygoon)
+
+cat("Data ophalen uit de Atlas (beperkt tot de regio van het hok)...\n")
+
+raw_occurrences <- galah_call() |>
+  # 1. We vertellen de server dat we ENKEL data willen binnen dit vierkant (Bounding Box)
+  galah_geolocate(mijn_hok_polygoon, type = "bbox") |> 
+  # 2. We filteren aan de poort direct op jouw soorten
+  filter(scientificName %in% soorten_subset) |> 
+  select(scientificName, year, decimalLatitude, decimalLongitude) |>
+  atlas_occurrences()
+
+cat("Aantal binnengehaalde rijen voor deze regio:", nrow(raw_occurrences), "\n")
+```
+```{r}
+# ==========================================
+# STAP 4: Ruimtelijk snijden & Tijdsintervallen LOKAAL
+# ==========================================
+if (!is.null(raw_occurrences) && nrow(raw_occurrences) > 0) {
+  
+  cat("Waarnemingen exact filteren binnen uurhok:", mijn_uurhok_naam, "...\n")
+  
+  # Maak van de binnengekomen punten een sf-object
+  punten_sf <- raw_occurrences |> 
+    filter(!is.na(decimalLongitude) & !is.na(decimalLatitude)) |> 
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  
+  # Snijd de punten geografisch met de exacte IFBL-polygoon
+  punten_in_hok <- st_intersection(punten_sf, mijn_hok_polygoon)
+  
+  # Bereken de 10-jaars periodes en bouw de matrix
+  eindresultaat <- punten_in_hok |>
+    st_drop_geometry() |> 
+    filter(!is.na(year) & year >= 1980) |> 
+    mutate(
+      tijdsinterval = cut(
+        year, 
+        breaks = seq(1980, 2030, by = 10), 
+        right = FALSE,
+        labels = c("1980-1989", "1990-1999", "2000-2009", "2010-2019", "2020-2029")
+      )
+    ) |>
+    group_by(scientificName, tijdsinterval) |>
+    tally(name = "aantal") |>
+    ungroup() |>
+    pivot_wider(names_from = tijdsinterval, values_from = aantal, values_fill = 0)
+  
+  # Toon de definitieve tabel!
+  print(eindresultaat)
+  
+} else {
+  cat("Geen data overgebleven na ruimtelijke filtering.\n")
+}
+```
+
