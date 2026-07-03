@@ -16,6 +16,7 @@ library(sf)
 library(tidyr)
 library(stringr)
 library(leaflet)
+library(httr2)
 
 galah_config(atlas = "Flanders")
 ```
@@ -50,36 +51,52 @@ We berekenen zelf de bounding box voor het uurhok
 
 We zetten de uurhok-code wiskundig om naar de exacte Belgische Lambert 72 coördinaten en transformeren de polygoon daarna naar WGS84 voor de geografische query.
 
+
+We berekenen de polygoon volledig lokaal in het geheugen van R. De formule is gecorrigeerd op basis van de officiële topografische uitlijning van jouw IFBL-uurhokkenkaart.
+
 ```{r}
-parse_ifbl_4km <- function(hok_naam) {
+parse_ifbl_exact_4km <- function(hok_naam) {
   clean_name <- gsub("[-_ ]", "", toupper(hok_naam))
+  
   letter <- substr(clean_name, 1, 1)
   kaartblad_y <- as.numeric(substr(clean_name, 2, 2))
   uur_y <- as.numeric(substr(clean_name, 3, 3))
   uur_x <- as.numeric(substr(clean_name, 4, 4))
   
+  # Index van de hoofdletter bepalen volgens de IFBL-standaard
   letter_idx <- case_match(letter,
     "A"~0, "B"~1, "C"~2, "D"~3, "E"~4, "F"~5, "G"~6, "H"~7, "I"~8, "J"~9, "K"~10, "L"~11, "M"~12
   )
   
-  orig_x <- 20000 + (letter_idx * 32000)
-  orig_y <- 250000 - (kaartblad_y * 20000)
+  # DE CORREKTE IFBL-ORIGIN IN LAMBERT 72 METERS:
+  # Het IFBL-grid start wiskundig op X=6000 en Y=232000
+  orig_x <- 6000 + (letter_idx * 32000)
+  orig_y <- 232000 - (kaartblad_y * 20000)
   
+  # Bereken de hoekpunten van het 4x4 km uurhok
   xmin <- orig_x + ((uur_x - 1) * 4000)
-  ymin <- orig_y - (uur_y * 4000) 
+  ymin <- orig_y - (uur_y * 4000)
   xmax <- xmin + 4000
   ymax <- ymin + 4000
   
+  # Maak de vierkante polygoon in Lambert 72 (CRS 31370)
   coords <- matrix(c(xmin, ymin, xmax, ymin, xmax, ymax, xmin, ymax, xmin, ymin), ncol = 2, byrow = TRUE)
-  poly <- st_polygon(list(coords)) |> st_sfc(crs = 31370) |> st_as_sf()
+  poly <- st_polygon(list(coords)) |> 
+    st_sfc(crs = 31370) |> 
+    st_as_sf()
+  
   return(poly)
 }
 
-# Bereken de exacte polygoon
-uurhok_sf <- parse_ifbl_4km(mijn_uurhok_naam)
+# Bereken de polygoon lokaal
+uurhok_sf <- parse_ifbl_exact_4km(mijn_uurhok_naam)
+
+# Transformeer naar WGS84 voor de atlas query en leaflet
 mijn_hok_polygoon <- st_transform(uurhok_sf, crs = 4326)
 
-cat("Polygoon voor", mijn_uurhok_naam, "succesvol berekend.\n")
+# Dubbele check in de console:
+cat("Nieuwe berekende GPS-grenzen:\n")
+print(st_bbox(mijn_hok_polygoon))
 ```
 ```{r}
 # Bereken de uiterste coördinaten (min/max) van het uurhok
