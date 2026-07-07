@@ -29,7 +29,7 @@ mijn_uurhok_naam <- "D3-22"
 
 #ophalen soortenlijst
 
-# Voer de galah call uit met de soortenfilter
+### Voer de galah call uit met de soortenfilter
 
 ```{r}
 
@@ -45,47 +45,12 @@ tellingen_sleutelsoorten <- galah_call() |>
 # Bekijk het resultaat
 print(tellingen_sleutelsoorten)
 ```
-# Maak de tabel aan
 
-```{r}
-
-# 1. Definieer de chronologische volgorde vanaf 1930
-intervallen_labels <- c("1930-1939", "1940-1949", "1950-1959", "1960-1969", 
-                        "1970-1979", "1980-1989", "1990-1999", "2000-2009", 
-                        "2010-2019", "2020-2029")
-
-# 2. Bouw de matrix op uit de tellingen
-counts_matrix <- tellingen_sleutelsoorten |>
-  mutate(year = as.numeric(year)) |>
-  filter(!is.na(year) & year >= 1930) |>
-  mutate(
-    tijdsinterval = cut(
-      year, 
-      breaks = seq(1930, 2030, by = 10), 
-      right = FALSE,
-      labels = intervallen_labels
-    ),
-    tijdsinterval = factor(tijdsinterval, levels = intervallen_labels)
-  ) |>
-  group_by(scientificName, tijdsinterval, .drop = FALSE) |>
-  summarise(totaal_aantal = sum(count, na.rm = TRUE), .groups = "drop") |>
-  # FIX: we gebruiken hier 'totaal_aantal' omdat we dat hierboven zo genoemd hebben
-  pivot_wider(names_from = tijdsinterval, values_from = totaal_aantal, values_fill = 0) |>
-  select(scientificName, all_of(intervallen_labels))
-
-# 3. Print de tabel met de exacte dynamische titel bovenaan
-knitr::kable(
-  counts_matrix, 
-  caption = paste("Aantal waarnemingen per sleutelsoort in IFBL uurhok", mijn_uurhok_naam)
-)
-```
-
-### 5. Trendmatrix Opbouwen & Veiligheidscheck
+# Trendmatrix Opbouwen & Veiligheidscheck
 We groeperen de binnengehaalde tellingen uit `tellingen_sleutelsoorten` in chronologische decennia vanaf 1930.
 
 
 ```{r}
-
 
 intervallen_labels = c("1930-1939", "1940-1949", "1950-1959", "1960-1969", 
                         "1970-1979", "1980-1989", "1990-1999", "2000-2009", 
@@ -132,7 +97,7 @@ if (!is.null(tellingen_sleutelsoorten) && nrow(tellingen_sleutelsoorten) > 0) {
 
 
 
-### 7. Analyse van Verdwenen en Achteruitgaande Sleutelsoorten
+# Analyse van Verdwenen en Achteruitgaande Sleutelsoorten
 Om te zien welke habitat-specifieke sleutelsoorten historisch aanwezig waren maar recent (sinds 2000) niet meer zijn waargenomen, berekenen we een status per soort.
 
 ```{r}
