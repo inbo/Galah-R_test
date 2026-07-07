@@ -1,0 +1,182 @@
+---
+title: "Sleutelsoorten_per_hok_interval"
+author: "Brosens_Dimitri"
+date: "2026-07-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(galah)
+library(dplyr)
+library(sf)
+library(tidyr)
+library(stringr)
+library(leaflet)
+library(httr2)
+
+galah_config(atlas = "Flanders")
+```
+
+# Geef hier je hok-code
+
+```{r}
+mijn_uurhok_naam <- "D3-22"
+```
+
+#ophalen soortenlijst
+
+# Voer de galah call uit met de soortenfilter
+
+```{r}
+
+
+tellingen_sleutelsoorten <- galah_call() |>
+   filter(
+    cl201 == "d3-21",
+    scientificName %in% soorten_subset # HIER filter je op jouw specifieke soortenlijst
+  ) |>
+  group_by(year, scientificName) |> # Tip: 'scientificName' toevoegen aan group_by zodat je de telling per soort ziet i.p.v. per orde
+  atlas_counts()
+
+# Bekijk het resultaat
+print(tellingen_sleutelsoorten)
+```
+# Maak de tabel aan
+
+```{r}
+
+# 1. Definieer de chronologische volgorde vanaf 1930
+intervallen_labels <- c("1930-1939", "1940-1949", "1950-1959", "1960-1969", 
+                        "1970-1979", "1980-1989", "1990-1999", "2000-2009", 
+                        "2010-2019", "2020-2029")
+
+# 2. Bouw de matrix op uit de tellingen
+counts_matrix <- tellingen_sleutelsoorten |>
+  mutate(year = as.numeric(year)) |>
+  filter(!is.na(year) & year >= 1930) |>
+  mutate(
+    tijdsinterval = cut(
+      year, 
+      breaks = seq(1930, 2030, by = 10), 
+      right = FALSE,
+      labels = intervallen_labels
+    ),
+    tijdsinterval = factor(tijdsinterval, levels = intervallen_labels)
+  ) |>
+  group_by(scientificName, tijdsinterval, .drop = FALSE) |>
+  summarise(totaal_aantal = sum(count, na.rm = TRUE), .groups = "drop") |>
+  # FIX: we gebruiken hier 'totaal_aantal' omdat we dat hierboven zo genoemd hebben
+  pivot_wider(names_from = tijdsinterval, values_from = totaal_aantal, values_fill = 0) |>
+  select(scientificName, all_of(intervallen_labels))
+
+# 3. Print de tabel met de exacte dynamische titel bovenaan
+knitr::kable(
+  counts_matrix, 
+  caption = paste("Aantal waarnemingen per sleutelsoort in IFBL uurhok", mijn_uurhok_naam)
+)
+```
+
+### 5. Trendmatrix Opbouwen & Veiligheidscheck
+We groeperen de binnengehaalde tellingen uit `tellingen_sleutelsoorten` in chronologische decennia vanaf 1930.
+
+
+```{r}
+
+
+intervallen_labels = c("1930-1939", "1940-1949", "1950-1959", "1960-1969", 
+                        "1970-1979", "1980-1989", "1990-1999", "2000-2009", 
+                        "2010-2019", "2020-2029")
+
+# 1. Controleer of de tellingen succesvol zijn binnengekomen
+if (!is.null(tellingen_sleutelsoorten) && nrow(tellingen_sleutelsoorten) > 0) {
+  
+  counts_matrix = tellingen_sleutelsoorten |>
+    mutate(year = as.numeric(year)) |>
+    filter(!is.na(year) & year >= 1930) |>
+    mutate(
+      tijdsinterval = cut(
+        year, 
+        breaks = seq(1930, 2030, by = 10), 
+        right = FALSE,
+        labels = intervallen_labels
+      ),
+      tijdsinterval = factor(tijdsinterval, levels = intervallen_labels)
+    ) |>
+    # Omdat we met tellingen werken, sommeren we de kolom 'count' per decennium
+    group_by(scientificName, tijdsinterval, .drop = FALSE) |>
+    summarise(totaal_aantal = sum(count, na.rm = TRUE), .groups = "drop") |>
+    pivot_wider(names_from = tijdsinterval, values_from = totaal_aantal, values_fill = 0) |>
+    select(scientificName, all_of(intervallen_labels))
+
+  # 2. Automatische export naar data/processed
+  dir.create(here("data", "processed"), recursive = TRUE, showWarnings = FALSE)
+  bestandsnaam = here("data", "processed", paste0("countsmatrix_", tolower(mijn_uurhok_naam), ".csv"))
+  write.csv2(counts_matrix, file = bestandsnaam, row.names = FALSE)
+
+  # 3. Print de basistabel
+  knitr::kable(
+    counts_matrix, 
+    caption = paste("Aantal waarnemingen per sleutelsoort in IFBL uurhok", mijn_uurhok_naam)
+  )
+  
+} else {
+  counts_matrix = NULL
+  cat("WAARSCHUWING: Er werden geen tellingen gevonden voor de geselecteerde soorten in dit uurhok.\n")
+}
+```
+
+
+
+
+### 7. Analyse van Verdwenen en Achteruitgaande Sleutelsoorten
+Om te zien welke habitat-specifieke sleutelsoorten historisch aanwezig waren maar recent (sinds 2000) niet meer zijn waargenomen, berekenen we een status per soort.
+
+```{r}
+if (!is.null(counts_matrix) && nrow(counts_matrix) > 0) {
+  
+  status_matrix = counts_matrix |>
+    rowwise() |>
+    mutate(
+      Historisch_totaal = sum(c_across(all_of(c("1930-1939", "1940-1949", "1950-1959", "1960-1969", "1970-1979", "1980-1989", "1990-1999")))),
+      Recent_totaal     = sum(c_across(all_of(c("2000-2009", "2010-2019", "2020-2029"))))
+    ) |>
+    ungroup() |>
+    mutate(
+      Status = case_when(
+        Historisch_totaal > 0  & Recent_totaal == 0 ~ "🔴 Mogelijk verdwenen",
+        Historisch_totaal > 0  & Recent_totaal < (Historisch_totaal / 2) ~ "🟠 Sterk achteruitgaand",
+        Historisch_totaal == 0 & Recent_totaal > 0 ~ "🟢 Nieuwe vestiging",
+        Historisch_totaal > 0  & Recent_totaal >= (Historisch_totaal / 2) ~ "🔵 Stabiel / Aanwezig",
+        TRUE ~ "⚪ Geen/Te weinig data"
+      )
+    ) |>
+    arrange(factor(Status, levels = c("🔴 Mogelijk verdwenen", "🟠 Sterk achteruitgaand", "🔵 Stabiel / Aanwezig", "🟢 Nieuwe vestiging", "⚪ Geen/Te weinig data")))
+
+  # Toon de prachtige gesorteerde tabel met statussen
+  knitr::kable(
+    status_matrix |> select(scientificName, Status, everything(), -Historisch_totaal, -Recent_totaal),
+    caption = paste("Trend- en alarmstatus van sleutelsoorten in uurhok", mijn_uurhok_naam)
+  )
+  
+} else {
+  cat("Status-analyse overgeslagen omdat er geen data beschikbaar is voor dit uurhok.\n")
+}
+```
+
+
+
+  
+  
+```{r}
+tabel <- here("data", "processed", paste0("countsmatrix_", tolower(mijn_uurhok_naam), ".csv"))
+```
+
+```{r}
+write.csv2(eindresultaat, file = tabel, row.names = FALSE)
+```
+
+
