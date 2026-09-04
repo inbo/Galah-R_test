@@ -57,7 +57,8 @@ met_rbac <- galah_call() |>
 
 print(met_rbac)
 ```
-
+#2. Hoeveel records zitten er totaal in VBP (ingelogd)?
+ 
 ```{r}
 totaal_ingelogd <- galah_call() |>
   authenticate() |>
