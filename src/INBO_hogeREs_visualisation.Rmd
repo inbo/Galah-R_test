@@ -24,9 +24,20 @@ rbac_data <- galah_call() |>
 
 ```{r}
 
-beschikbare_datasets <- show_all(datasets)
-print(beschikbare_datasets)
+soortenlijst <- show_all(lists)
+print(soortenlijst
+      )
 ```
+
+```{r}
+# Filter records by a specific species list ID
+galah_call() |>
+  galah_filter(species_list_uid == "dr287") |>
+  atlas_counts()
+```
+
+
+
 ```{r}
 dataset_tellingen <- galah_call() |>
   authenticate() |>  # Optioneel, maar zo tel je ook je RBAC data mee

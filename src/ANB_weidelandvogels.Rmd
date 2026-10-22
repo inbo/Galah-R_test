@@ -1,0 +1,60 @@
+---
+title: "weidevogels"
+author: "Brosens_Dimitri"
+date: "2026-09-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(galah)
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+
+#options(browser = "/usr/bin/google-chrome")
+
+galah_config(atlas = "Flanders", authenticate = TRUE, verbose = TRUE,
+             email = Sys.getenv("GBIF_EMAIL"))
+```
+
+```{r}
+weidevogels <- c(
+  "Vanellus vanellus",      # Kievit
+  "Limosa limosa",          # Grutto
+  "Numenius arquata",       # Wulp
+  "Tringa totanus"          # Tureluur
+)
+```
+
+```{r}
+start_jaar <- 1960
+eind_jaar <- 2025
+```
+
+```{r}
+soortenlijst_dr298 <- galah_call() |>
+  galah_filter(species_list_uid == "dr298") |>
+  atlas_species()
+```
+
+```{r}
+print(soortenlijst_dr298)
+```
+```{r}
+beschikbare_datasets <- show_all(datasets)
+print(beschikbare_datasets)
+```
+```{r}
+
+soortenlijst <- show_all(lists)
+print(soortenlijst
+      )
+
+

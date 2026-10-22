@@ -17,6 +17,7 @@ library(tidyr)
 library(stringr)
 library(leaflet)
 library(httr2)
+library(here)
 
 galah_config(atlas = "Flanders")
 ```
